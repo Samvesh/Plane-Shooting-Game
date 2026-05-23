@@ -1,0 +1,324 @@
+import pygame
+import random
+import math
+import sys
+import time
+
+pygame.init()
+
+WIDTH, HEIGHT = 800, 600
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Missile Defense vs Planes")
+clock = pygame.time.Clock()
+
+COLORS = [(255, 0, 0), (0, 255, 0), (0, 0, 255),
+          (255, 255, 0), (255, 0, 255), (0, 255, 255), (255, 255, 255)]
+
+font = pygame.font.SysFont(None, 30)
+
+class Particle:
+    def __init__(self, x, y, is_fire=True):
+        angle = random.uniform(0, 2 * math.pi)
+        speed = random.uniform(0.5, 3)
+        self.x, self.y = x, y
+        self.vx = math.cos(angle) * speed
+        self.vy = math.sin(angle) * speed
+        self.life = random.randint(20, 40)
+        self.is_fire = is_fire
+        if is_fire:
+            self.color = random.choice([(255, 100, 0), (255, 50, 0), (255, 200, 0), (255, 150, 50)])
+        else:
+            self.color = random.choice([(80, 80, 80), (60, 60, 60), (100, 100, 100)])
+        self.radius = random.randint(2, 5)
+
+    def update(self):
+        self.x += self.vx
+        self.y += self.vy
+        if not self.is_fire:
+            self.vy -= 0.05
+        self.life -= 1
+
+    def draw(self, surface):
+        if self.life > 0:
+            alpha = min(255, self.life * 6)
+            color = tuple(min(255, int(c * alpha / 255)) for c in self.color)
+            pygame.draw.circle(surface, color, (int(self.x), int(self.y)), self.radius)
+
+class Missile:
+    def __init__(self, x):
+        self.x = x
+        self.y = HEIGHT
+        self.vy = random.uniform(-20, -25)
+        self.exploded = False
+        self.particles = []
+        self.missile_length = 25
+        self.missile_width = 8
+        self.explosion_radius = 40
+        self.explosion_frame = 0
+        self.max_explosion_frames = 15
+
+    def update(self):
+        if not self.exploded:
+            self.y += self.vy
+            self.vy += 0.15
+            if self.y < 50:
+                self.explode()
+        else:
+            self.explosion_frame += 1
+            for p in self.particles:
+                p.update()
+
+    def explode(self):
+        self.exploded = True
+        for _ in range(60):
+            self.particles.append(Particle(self.x, self.y, is_fire=True))
+        for _ in range(30):
+            self.particles.append(Particle(self.x, self.y, is_fire=False))
+
+    def draw(self, surface):
+        if not self.exploded:
+            pygame.draw.rect(surface, (100, 120, 80),
+                           (self.x - self.missile_width // 2, self.y - self.missile_length,
+                            self.missile_width, self.missile_length))
+            pygame.draw.polygon(surface, (80, 100, 60), [
+                (self.x, self.y - self.missile_length - 8),
+                (self.x - self.missile_width // 2, self.y - self.missile_length),
+                (self.x + self.missile_width // 2, self.y - self.missile_length)
+            ])
+            pygame.draw.polygon(surface, (120, 140, 100), [
+                (self.x - self.missile_width // 2, self.y - 5),
+                (self.x - self.missile_width // 2 - 4, self.y),
+                (self.x - self.missile_width // 2, self.y - 2)
+            ])
+            pygame.draw.polygon(surface, (120, 140, 100), [
+                (self.x + self.missile_width // 2, self.y - 5),
+                (self.x + self.missile_width // 2 + 4, self.y),
+                (self.x + self.missile_width // 2, self.y - 2)
+            ])
+            pygame.draw.line(surface, (150, 150, 150),
+                           (self.x - self.missile_width // 2, self.y - self.missile_length // 2),
+                           (self.x + self.missile_width // 2, self.y - self.missile_length // 2), 2)
+        else:
+            if self.explosion_frame < self.max_explosion_frames:
+                flash_size = int(30 - self.explosion_frame * 1.5)
+                if flash_size > 0:
+                    pygame.draw.circle(surface, (255, 200, 0), (int(self.x), int(self.y)), flash_size)
+                    pygame.draw.circle(surface, (255, 100, 0), (int(self.x), int(self.y)), flash_size - 5)
+            for p in self.particles:
+                p.draw(surface)
+
+    def hit(self, plane):
+        if self.exploded:
+            plane_center_x = plane.x + plane.width // 2
+            plane_center_y = plane.y + plane.height // 2
+            distance = math.sqrt((self.x - plane_center_x)**2 + (self.y - plane_center_y)**2)
+            return distance < self.explosion_radius
+        else:
+            return (plane.x < self.x < plane.x + plane.width) and (plane.y < self.y < plane.y + plane.height)
+
+class Plane:
+    def __init__(self):
+        self.x = -120
+        self.y = random.randint(50, 300)
+        self.width = 80
+        self.height = 30
+        self.speed = 2
+        self.hit = False
+
+    def update(self):
+        self.x += self.speed
+
+    def draw(self, surface):
+        if not self.hit:
+            x, y = self.x, self.y
+
+            # === FUSELAGE (long narrow body) ===
+            fuselage_color = (160, 160, 170)
+            fuselage_dark = (110, 110, 120)
+            # Main body
+            pygame.draw.polygon(surface, fuselage_color, [
+                (x, y + 5),
+                (x + 70, y + 3),
+                (x + 85, y + 6),   # nose tip
+                (x + 70, y + 9),
+                (x, y + 11),
+            ])
+            # Underside shading
+            pygame.draw.polygon(surface, fuselage_dark, [
+                (x, y + 11),
+                (x + 70, y + 9),
+                (x + 85, y + 6),
+                (x + 70, y + 12),
+                (x, y + 14),
+            ])
+
+            # === COCKPIT CANOPY ===
+            canopy_color = (80, 160, 220)
+            canopy_shine = (140, 210, 255)
+            pygame.draw.polygon(surface, canopy_color, [
+                (x + 52, y + 3),
+                (x + 62, y - 2),
+                (x + 70, y + 1),
+                (x + 70, y + 3),
+            ])
+            pygame.draw.polygon(surface, canopy_shine, [
+                (x + 54, y + 2),
+                (x + 61, y - 1),
+                (x + 66, y + 1),
+                (x + 63, y + 2),
+            ])
+
+            # === SWEPT DELTA WINGS ===
+            wing_color = (140, 140, 150)
+            wing_dark = (90, 90, 100)
+            # Top wing
+            pygame.draw.polygon(surface, wing_color, [
+                (x + 15, y + 6),
+                (x + 50, y + 6),
+                (x + 30, y - 22),
+                (x + 10, y - 10),
+            ])
+            pygame.draw.polygon(surface, wing_dark, [
+                (x + 30, y - 22),
+                (x + 10, y - 10),
+                (x + 12, y - 8),
+                (x + 32, y - 19),
+            ])
+            # Bottom wing (mirror)
+            pygame.draw.polygon(surface, wing_color, [
+                (x + 15, y + 10),
+                (x + 50, y + 10),
+                (x + 30, y + 34),
+                (x + 10, y + 22),
+            ])
+            pygame.draw.polygon(surface, wing_dark, [
+                (x + 30, y + 34),
+                (x + 10, y + 22),
+                (x + 12, y + 20),
+                (x + 32, y + 31),
+            ])
+
+            # === TAIL FINS ===
+            tail_color = (130, 130, 140)
+            # Vertical tail fin (top)
+            pygame.draw.polygon(surface, tail_color, [
+                (x + 5, y + 5),
+                (x + 18, y + 5),
+                (x + 12, y - 10),
+                (x + 3, y - 4),
+            ])
+            # Vertical tail fin (bottom)
+            pygame.draw.polygon(surface, tail_color, [
+                (x + 5, y + 11),
+                (x + 18, y + 11),
+                (x + 12, y + 24),
+                (x + 3, y + 18),
+            ])
+            # Horizontal stabilizer
+            pygame.draw.polygon(surface, tail_color, [
+                (x, y + 6),
+                (x + 20, y + 7),
+                (x + 20, y + 9),
+                (x, y + 10),
+            ])
+
+            # === ENGINE NOZZLE ===
+            pygame.draw.ellipse(surface, (60, 60, 65), (x - 6, y + 4, 10, 8))
+            pygame.draw.ellipse(surface, (40, 40, 45), (x - 4, y + 5, 6, 6))
+            # Engine glow
+            pygame.draw.ellipse(surface, (255, 120, 30), (x - 3, y + 6, 4, 4))
+
+            # === AIR INTAKES ===
+            intake_color = (50, 50, 55)
+            pygame.draw.polygon(surface, intake_color, [
+                (x + 38, y + 3),
+                (x + 52, y + 3),
+                (x + 52, y + 5),
+                (x + 38, y + 5),
+            ])
+            pygame.draw.polygon(surface, intake_color, [
+                (x + 38, y + 11),
+                (x + 52, y + 11),
+                (x + 52, y + 13),
+                (x + 38, y + 13),
+            ])
+
+            # === WEAPON PYLONS (small missiles under wings) ===
+            pylon_color = (100, 100, 110)
+            # Left pylon missile
+            pygame.draw.rect(surface, pylon_color, (x + 22, y - 13, 14, 4))
+            pygame.draw.polygon(surface, (180, 60, 60), [
+                (x + 36, y - 11),
+                (x + 40, y - 13),
+                (x + 36, y - 9),
+            ])
+            # Right pylon missile
+            pygame.draw.rect(surface, pylon_color, (x + 22, y + 25, 14, 4))
+            pygame.draw.polygon(surface, (180, 60, 60), [
+                (x + 36, y + 27),
+                (x + 40, y + 25),
+                (x + 36, y + 29),
+            ])
+
+            # === NOSE CONE DETAIL ===
+            pygame.draw.polygon(surface, (200, 200, 210), [
+                (x + 72, y + 4),
+                (x + 85, y + 6),
+                (x + 72, y + 8),
+            ])
+
+            # === FUSELAGE PANEL LINES ===
+            pygame.draw.line(surface, (130, 130, 140), (x + 20, y + 6), (x + 65, y + 5), 1)
+            pygame.draw.line(surface, (130, 130, 140), (x + 20, y + 10), (x + 65, y + 11), 1)
+
+missiles = []
+planes = []
+spawn_timer = 0
+plane_destroyed = 0
+start_time = time.time()
+
+running = True
+while running:
+    screen.fill((0, 0, 0))
+
+    for e in pygame.event.get():
+        if e.type == pygame.QUIT:
+            running = False
+        elif e.type == pygame.MOUSEBUTTONDOWN:
+            x, _ = pygame.mouse.get_pos()
+            missiles.append(Missile(x))
+
+    spawn_timer += 1
+    if spawn_timer > 180:
+        planes.append(Plane())
+        spawn_timer = 0
+
+    for plane in planes[:]:
+        plane.update()
+        plane.draw(screen)
+        if plane.x > WIDTH:
+            planes.remove(plane)
+
+    for missile in missiles[:]:
+        missile.update()
+        missile.draw(screen)
+        for plane in planes[:]:
+            if not plane.hit and missile.hit(plane):
+                plane.hit = True
+                if not missile.exploded:
+                    missile.explode()
+                plane_destroyed += 1
+        if missile.exploded and missile.explosion_frame > missile.max_explosion_frames and all(p.life <= 0 for p in missile.particles):
+            missiles.remove(missile)
+
+    elapsed = int(time.time() - start_time)
+    timer_text = font.render(f"Time: {elapsed}s", True, (255, 255, 255))
+    score_text = font.render(f"Planes Destroyed: {plane_destroyed}", True, (255, 255, 255))
+    screen.blit(timer_text, (10, 10))
+    screen.blit(score_text, (10, 40))
+
+    pygame.display.flip()
+    clock.tick(60)
+
+pygame.quit()
+sys.exit()
