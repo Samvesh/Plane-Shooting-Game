@@ -1,218 +1,324 @@
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[codz]
-*$py.class
+import pygame
+import random
+import math
+import sys
+import time
 
-# C extensions
-*.so
+pygame.init()
 
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+WIDTH, HEIGHT = 800, 600
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Missile Defense vs Planes")
+clock = pygame.time.Clock()
 
-# PyInstaller
-#   Usually these files are written by a python script from a template
-#   before PyInstaller builds the exe, so as to inject date/other infos into it.
-*.manifest
-*.spec
+COLORS = [(255, 0, 0), (0, 255, 0), (0, 0, 255),
+          (255, 255, 0), (255, 0, 255), (0, 255, 255), (255, 255, 255)]
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
+font = pygame.font.SysFont(None, 30)
 
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py.cover
-.hypothesis/
-.pytest_cache/
-cover/
+class Particle:
+    def __init__(self, x, y, is_fire=True):
+        angle = random.uniform(0, 2 * math.pi)
+        speed = random.uniform(0.5, 3)
+        self.x, self.y = x, y
+        self.vx = math.cos(angle) * speed
+        self.vy = math.sin(angle) * speed
+        self.life = random.randint(20, 40)
+        self.is_fire = is_fire
+        if is_fire:
+            self.color = random.choice([(255, 100, 0), (255, 50, 0), (255, 200, 0), (255, 150, 50)])
+        else:
+            self.color = random.choice([(80, 80, 80), (60, 60, 60), (100, 100, 100)])
+        self.radius = random.randint(2, 5)
 
-# Translations
-*.mo
-*.pot
+    def update(self):
+        self.x += self.vx
+        self.y += self.vy
+        if not self.is_fire:
+            self.vy -= 0.05
+        self.life -= 1
 
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
+    def draw(self, surface):
+        if self.life > 0:
+            alpha = min(255, self.life * 6)
+            color = tuple(min(255, int(c * alpha / 255)) for c in self.color)
+            pygame.draw.circle(surface, color, (int(self.x), int(self.y)), self.radius)
 
-# Flask stuff:
-instance/
-.webassets-cache
+class Missile:
+    def __init__(self, x):
+        self.x = x
+        self.y = HEIGHT
+        self.vy = random.uniform(-20, -25)
+        self.exploded = False
+        self.particles = []
+        self.missile_length = 25
+        self.missile_width = 8
+        self.explosion_radius = 40
+        self.explosion_frame = 0
+        self.max_explosion_frames = 15
 
-# Scrapy stuff:
-.scrapy
+    def update(self):
+        if not self.exploded:
+            self.y += self.vy
+            self.vy += 0.15
+            if self.y < 50:
+                self.explode()
+        else:
+            self.explosion_frame += 1
+            for p in self.particles:
+                p.update()
 
-# Sphinx documentation
-docs/_build/
+    def explode(self):
+        self.exploded = True
+        for _ in range(60):
+            self.particles.append(Particle(self.x, self.y, is_fire=True))
+        for _ in range(30):
+            self.particles.append(Particle(self.x, self.y, is_fire=False))
 
-# PyBuilder
-.pybuilder/
-target/
+    def draw(self, surface):
+        if not self.exploded:
+            pygame.draw.rect(surface, (100, 120, 80),
+                           (self.x - self.missile_width // 2, self.y - self.missile_length,
+                            self.missile_width, self.missile_length))
+            pygame.draw.polygon(surface, (80, 100, 60), [
+                (self.x, self.y - self.missile_length - 8),
+                (self.x - self.missile_width // 2, self.y - self.missile_length),
+                (self.x + self.missile_width // 2, self.y - self.missile_length)
+            ])
+            pygame.draw.polygon(surface, (120, 140, 100), [
+                (self.x - self.missile_width // 2, self.y - 5),
+                (self.x - self.missile_width // 2 - 4, self.y),
+                (self.x - self.missile_width // 2, self.y - 2)
+            ])
+            pygame.draw.polygon(surface, (120, 140, 100), [
+                (self.x + self.missile_width // 2, self.y - 5),
+                (self.x + self.missile_width // 2 + 4, self.y),
+                (self.x + self.missile_width // 2, self.y - 2)
+            ])
+            pygame.draw.line(surface, (150, 150, 150),
+                           (self.x - self.missile_width // 2, self.y - self.missile_length // 2),
+                           (self.x + self.missile_width // 2, self.y - self.missile_length // 2), 2)
+        else:
+            if self.explosion_frame < self.max_explosion_frames:
+                flash_size = int(30 - self.explosion_frame * 1.5)
+                if flash_size > 0:
+                    pygame.draw.circle(surface, (255, 200, 0), (int(self.x), int(self.y)), flash_size)
+                    pygame.draw.circle(surface, (255, 100, 0), (int(self.x), int(self.y)), flash_size - 5)
+            for p in self.particles:
+                p.draw(surface)
 
-# Jupyter Notebook
-.ipynb_checkpoints
+    def hit(self, plane):
+        if self.exploded:
+            plane_center_x = plane.x + plane.width // 2
+            plane_center_y = plane.y + plane.height // 2
+            distance = math.sqrt((self.x - plane_center_x)**2 + (self.y - plane_center_y)**2)
+            return distance < self.explosion_radius
+        else:
+            return (plane.x < self.x < plane.x + plane.width) and (plane.y < self.y < plane.y + plane.height)
 
-# IPython
-profile_default/
-ipython_config.py
+class Plane:
+    def __init__(self):
+        self.x = -120
+        self.y = random.randint(50, 300)
+        self.width = 80
+        self.height = 30
+        self.speed = 2
+        self.hit = False
 
-# pyenv
-#   For a library or package, you might want to ignore these files since the code is
-#   intended to run in multiple environments; otherwise, check them in:
-# .python-version
+    def update(self):
+        self.x += self.speed
 
-# pipenv
-#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
-#   However, in case of collaboration, if having platform-specific dependencies or dependencies
-#   having no cross-platform support, pipenv may install dependencies that don't work, or not
-#   install all needed dependencies.
-# Pipfile.lock
+    def draw(self, surface):
+        if not self.hit:
+            x, y = self.x, self.y
 
-# UV
-#   Similar to Pipfile.lock, it is generally recommended to include uv.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-# uv.lock
+            # === FUSELAGE (long narrow body) ===
+            fuselage_color = (160, 160, 170)
+            fuselage_dark = (110, 110, 120)
+            # Main body
+            pygame.draw.polygon(surface, fuselage_color, [
+                (x, y + 5),
+                (x + 70, y + 3),
+                (x + 85, y + 6),   # nose tip
+                (x + 70, y + 9),
+                (x, y + 11),
+            ])
+            # Underside shading
+            pygame.draw.polygon(surface, fuselage_dark, [
+                (x, y + 11),
+                (x + 70, y + 9),
+                (x + 85, y + 6),
+                (x + 70, y + 12),
+                (x, y + 14),
+            ])
 
-# poetry
-#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
-#   This is especially recommended for binary packages to ensure reproducibility, and is more
-#   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
-# poetry.lock
-# poetry.toml
+            # === COCKPIT CANOPY ===
+            canopy_color = (80, 160, 220)
+            canopy_shine = (140, 210, 255)
+            pygame.draw.polygon(surface, canopy_color, [
+                (x + 52, y + 3),
+                (x + 62, y - 2),
+                (x + 70, y + 1),
+                (x + 70, y + 3),
+            ])
+            pygame.draw.polygon(surface, canopy_shine, [
+                (x + 54, y + 2),
+                (x + 61, y - 1),
+                (x + 66, y + 1),
+                (x + 63, y + 2),
+            ])
 
-# pdm
-#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
-#   pdm recommends including project-wide configuration in pdm.toml, but excluding .pdm-python.
-#   https://pdm-project.org/en/latest/usage/project/#working-with-version-control
-# pdm.lock
-# pdm.toml
-.pdm-python
-.pdm-build/
+            # === SWEPT DELTA WINGS ===
+            wing_color = (140, 140, 150)
+            wing_dark = (90, 90, 100)
+            # Top wing
+            pygame.draw.polygon(surface, wing_color, [
+                (x + 15, y + 6),
+                (x + 50, y + 6),
+                (x + 30, y - 22),
+                (x + 10, y - 10),
+            ])
+            pygame.draw.polygon(surface, wing_dark, [
+                (x + 30, y - 22),
+                (x + 10, y - 10),
+                (x + 12, y - 8),
+                (x + 32, y - 19),
+            ])
+            # Bottom wing (mirror)
+            pygame.draw.polygon(surface, wing_color, [
+                (x + 15, y + 10),
+                (x + 50, y + 10),
+                (x + 30, y + 34),
+                (x + 10, y + 22),
+            ])
+            pygame.draw.polygon(surface, wing_dark, [
+                (x + 30, y + 34),
+                (x + 10, y + 22),
+                (x + 12, y + 20),
+                (x + 32, y + 31),
+            ])
 
-# pixi
-#   Similar to Pipfile.lock, it is generally recommended to include pixi.lock in version control.
-# pixi.lock
-#   Pixi creates a virtual environment in the .pixi directory, just like venv module creates one
-#   in the .venv directory. It is recommended not to include this directory in version control.
-.pixi
+            # === TAIL FINS ===
+            tail_color = (130, 130, 140)
+            # Vertical tail fin (top)
+            pygame.draw.polygon(surface, tail_color, [
+                (x + 5, y + 5),
+                (x + 18, y + 5),
+                (x + 12, y - 10),
+                (x + 3, y - 4),
+            ])
+            # Vertical tail fin (bottom)
+            pygame.draw.polygon(surface, tail_color, [
+                (x + 5, y + 11),
+                (x + 18, y + 11),
+                (x + 12, y + 24),
+                (x + 3, y + 18),
+            ])
+            # Horizontal stabilizer
+            pygame.draw.polygon(surface, tail_color, [
+                (x, y + 6),
+                (x + 20, y + 7),
+                (x + 20, y + 9),
+                (x, y + 10),
+            ])
 
-# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
+            # === ENGINE NOZZLE ===
+            pygame.draw.ellipse(surface, (60, 60, 65), (x - 6, y + 4, 10, 8))
+            pygame.draw.ellipse(surface, (40, 40, 45), (x - 4, y + 5, 6, 6))
+            # Engine glow
+            pygame.draw.ellipse(surface, (255, 120, 30), (x - 3, y + 6, 4, 4))
 
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
+            # === AIR INTAKES ===
+            intake_color = (50, 50, 55)
+            pygame.draw.polygon(surface, intake_color, [
+                (x + 38, y + 3),
+                (x + 52, y + 3),
+                (x + 52, y + 5),
+                (x + 38, y + 5),
+            ])
+            pygame.draw.polygon(surface, intake_color, [
+                (x + 38, y + 11),
+                (x + 52, y + 11),
+                (x + 52, y + 13),
+                (x + 38, y + 13),
+            ])
 
-# Redis
-*.rdb
-*.aof
-*.pid
+            # === WEAPON PYLONS (small missiles under wings) ===
+            pylon_color = (100, 100, 110)
+            # Left pylon missile
+            pygame.draw.rect(surface, pylon_color, (x + 22, y - 13, 14, 4))
+            pygame.draw.polygon(surface, (180, 60, 60), [
+                (x + 36, y - 11),
+                (x + 40, y - 13),
+                (x + 36, y - 9),
+            ])
+            # Right pylon missile
+            pygame.draw.rect(surface, pylon_color, (x + 22, y + 25, 14, 4))
+            pygame.draw.polygon(surface, (180, 60, 60), [
+                (x + 36, y + 27),
+                (x + 40, y + 25),
+                (x + 36, y + 29),
+            ])
 
-# RabbitMQ
-mnesia/
-rabbitmq/
-rabbitmq-data/
+            # === NOSE CONE DETAIL ===
+            pygame.draw.polygon(surface, (200, 200, 210), [
+                (x + 72, y + 4),
+                (x + 85, y + 6),
+                (x + 72, y + 8),
+            ])
 
-# ActiveMQ
-activemq-data/
+            # === FUSELAGE PANEL LINES ===
+            pygame.draw.line(surface, (130, 130, 140), (x + 20, y + 6), (x + 65, y + 5), 1)
+            pygame.draw.line(surface, (130, 130, 140), (x + 20, y + 10), (x + 65, y + 11), 1)
 
-# SageMath parsed files
-*.sage.py
+missiles = []
+planes = []
+spawn_timer = 0
+plane_destroyed = 0
+start_time = time.time()
 
-# Environments
-.env
-.envrc
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+running = True
+while running:
+    screen.fill((0, 0, 0))
 
-# Spyder project settings
-.spyderproject
-.spyproject
+    for e in pygame.event.get():
+        if e.type == pygame.QUIT:
+            running = False
+        elif e.type == pygame.MOUSEBUTTONDOWN:
+            x, _ = pygame.mouse.get_pos()
+            missiles.append(Missile(x))
 
-# Rope project settings
-.ropeproject
+    spawn_timer += 1
+    if spawn_timer > 180:
+        planes.append(Plane())
+        spawn_timer = 0
 
-# mkdocs documentation
-/site
+    for plane in planes[:]:
+        plane.update()
+        plane.draw(screen)
+        if plane.x > WIDTH:
+            planes.remove(plane)
 
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
+    for missile in missiles[:]:
+        missile.update()
+        missile.draw(screen)
+        for plane in planes[:]:
+            if not plane.hit and missile.hit(plane):
+                plane.hit = True
+                if not missile.exploded:
+                    missile.explode()
+                plane_destroyed += 1
+        if missile.exploded and missile.explosion_frame > missile.max_explosion_frames and all(p.life <= 0 for p in missile.particles):
+            missiles.remove(missile)
 
-# Pyre type checker
-.pyre/
+    elapsed = int(time.time() - start_time)
+    timer_text = font.render(f"Time: {elapsed}s", True, (255, 255, 255))
+    score_text = font.render(f"Planes Destroyed: {plane_destroyed}", True, (255, 255, 255))
+    screen.blit(timer_text, (10, 10))
+    screen.blit(score_text, (10, 40))
 
-# pytype static type analyzer
-.pytype/
+    pygame.display.flip()
+    clock.tick(60)
 
-# Cython debug symbols
-cython_debug/
-
-# PyCharm
-#   JetBrains specific template is maintained in a separate JetBrains.gitignore that can
-#   be found at https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
-#   and can be added to the global gitignore or merged into this file.  For a more nuclear
-#   option (not recommended) you can uncomment the following to ignore the entire idea folder.
-# .idea/
-
-# Abstra
-#   Abstra is an AI-powered process automation framework.
-#   Ignore directories containing user credentials, local state, and settings.
-#   Learn more at https://abstra.io/docs
-.abstra/
-
-# Visual Studio Code
-#   Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
-#   that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#   and can be added to the global gitignore or merged into this file. However, if you prefer, 
-#   you could uncomment the following to ignore the entire vscode folder
-# .vscode/
-# Temporary file for partial code execution
-tempCodeRunnerFile.py
-
-# Ruff stuff:
-.ruff_cache/
-
-# PyPI configuration file
-.pypirc
-
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
-
-# Streamlit
-.streamlit/secrets.toml
+pygame.quit()
+sys.exit()
